@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# local session notes (handoff, task list), not part of the addon
+.claude/
+tasks/
