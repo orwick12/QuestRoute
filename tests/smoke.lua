@@ -43,6 +43,8 @@ SlashCmdList = {}
 local playerLevel, facing = 10, 0
 function UnitLevel() return playerLevel end
 function GetPlayerFacing() return facing end
+local bags = {} -- [itemId] = count
+function GetItemCount(itemId) return bags[itemId] or 0 end
 
 local timers, tickers = {}, {}
 C_Timer = {
@@ -78,7 +80,10 @@ local NPCS = {
     [4] = { name = "High Giver", spawns = { [12] = { { 5, 0 } } }, friendly = true },
     -- 2000 yd away and filed under another zone (13): what a zone border / city / cave looks like
     [5] = { name = "Border Giver", spawns = { [13] = { { 200, 0 } } }, friendly = true },
+    -- drops the item that starts quest 105; two spawns 50 yd apart, far from everything else
+    [6] = { name = "Defias Thug", spawns = { [12] = { { 300, 0 }, { 305, 0 } } }, friendly = false },
 }
+local ITEMS = { [900] = { name = "Bloody Note", npcDrops = { 6 } } }
 local function mkQuest(id, name, level, starter, finisher)
     return { Id = id, name = name, level = level, Starts = { NPC = { starter } }, Finisher = { NPC = { finisher } },
         Objectives = {}, SpecialObjectives = {}, IsComplete = function(self) return self.complete or 0 end }
@@ -89,7 +94,9 @@ local DBQUESTS = {
     [102] = mkQuest(102, "Dungeon Pickup", 10, 3, 3),
     [103] = mkQuest(103, "Way Too High", 20, 4, 4),
     [104] = mkQuest(104, "Border Pickup", 10, 5, 5),
+    [105] = mkQuest(105, "Mysterious Note", 10, nil, 1),
 }
+DBQUESTS[105].Starts = { Item = { 900 } }
 -- A quest in the log with a kill objective whose spawns are at 20 yd and 60 yd.
 local logQuest = mkQuest(200, "Kobold Stew", 10, 1, 1)
 logQuest.Objectives[1] = { Index = 1, Description = "Kobold Vermin", Needed = 8, Collected = 3, Completed = false,
@@ -105,6 +112,7 @@ local AvailableQuests = {
 local QuestieDB = {
     GetNPC = function(_, id) return NPCS[id] end,
     GetObject = function() return nil end,
+    GetItem = function(_, id) return ITEMS[id] end,
     GetQuest = function(id) return DBQUESTS[id] end,
 }
 local ZoneDB = { GetUiMapIdByAreaId = function(_, areaId) return areaId end }
@@ -130,7 +138,7 @@ end
 check(ns.Collect.ok, "Collect imported all Questie modules (err=" .. tostring(ns.Collect.err) .. ")")
 
 -- Questie draws its available quests (this goes through our hook)
-for _, id in ipairs({ 100, 101, 102, 103, 104 }) do AvailableQuests.DrawAvailableQuest(DBQUESTS[id]) end
+for _, id in ipairs({ 100, 101, 102, 103, 104, 105 }) do AvailableQuests.DrawAvailableQuest(DBQUESTS[id]) end
 check(ns.Collect.available[100] ~= nil, "hook mirrored an available quest")
 
 -- ADDON_LOADED, then Questie ready
@@ -268,6 +276,30 @@ check((currentHint() or "") == "", "no hint at the start position")
 chat = {}
 slash("reroute")
 check(chatHas("still the best next stop"), "same-target reroute explains itself (" .. lastChat() .. ")")
+
+-- item-started quest: routed to the mobs that drop the item
+chat = {}
+slash("list all")
+check(not chatHas("(no location) [pickup] Mysterious Note"), "item-started quest is not hidden as 'no location'")
+player.x, player.y = 2960, 0
+slash("reroute")
+chat = {}
+slash("list")
+check(chatHas("1. [pickup] Mysterious Note") and chatHas("@ Defias Thug"), "item-started quest targets a mob that drops the item")
+arrowFrame.scripts.OnUpdate(arrowFrame, 1)
+check(shownTexts():find("Loot Bloody Note from Defias Thug", 1, true) ~= nil, "arrow says which item to loot from whom (" .. shownTexts() .. ")")
+check(shownTexts():find("| 40 yd", 1, true) ~= nil, "arrow points at the nearest drop spawn (" .. shownTexts() .. ")")
+player.x, player.y = 3000, 0
+tick()
+arrowFrame.scripts.OnUpdate(arrowFrame, 1)
+check(shownTexts():find("| 50 yd", 1, true) ~= nil, "reaching one drop spawn sweeps to the next (" .. shownTexts() .. ")")
+bags[900] = 1
+eventFrame.scripts.OnEvent(eventFrame, "BAG_UPDATE_DELAYED")
+runTimers()
+chat = {}
+slash("list all")
+check(chatHas("(in bags) [pickup] Mysterious Note"), "starter item already in bags: hidden as 'in bags'")
+bags[900] = nil
 
 -- misc commands don't error
 for _, c in ipairs({ "", "", "help", "lock", "lock", "radius 60", "radius x", "lowturnins off", "skipped", "zzz" }) do

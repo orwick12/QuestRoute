@@ -20,7 +20,7 @@ local DEFAULTS = {
     lowTurnins = true,
     skipped = {},    -- [questId] = quest name
 }
-local RETARGET_YARDS = 15 -- reaching an unfinished objective spot moves the arrow to the next spawn of it
+local RETARGET_YARDS = 15 -- reaching an unfinished objective (or item-drop) spot moves the arrow to the next spawn
 
 local db
 local route = {}      -- ordered legs
@@ -144,7 +144,7 @@ local function tick()
     if not here then return end
     local tp = target.point
 
-    if target.stop.kind == "objective" and tp and Router.Distance(here, tp) <= RETARGET_YARDS then
+    if (target.stop.kind == "objective" or (tp and tp.drop)) and tp and Router.Distance(here, tp) <= RETARGET_YARDS then
         for i, p in ipairs(target.stop.points) do
             if p.x == tp.x and p.y == tp.y then visited[i] = true end
         end
@@ -371,6 +371,8 @@ events:SetScript("OnEvent", function(self, event, arg1)
         for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "PLAYER_LEVEL_UP" }) do
             pcall(self.RegisterEvent, self, e)
         end
+        -- Bags changed: a quest-starting item may have been looted (its pickup stop leaves the route).
+        if not pcall(self.RegisterEvent, self, "BAG_UPDATE_DELAYED") then pcall(self.RegisterEvent, self, "BAG_UPDATE") end
     else
         queueRefresh()
     end

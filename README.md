@@ -16,8 +16,9 @@ It reads [Questie](https://github.com/Questie/Questie)'s data (your quest log, t
 ## What it does
 
 - **Routes three kinds of stops:** quest pickups ("!" givers), quest objectives (kill/collect spots), and turn-ins.
+- **Item-started quests too:** for a quest that starts from a dropped item, the arrow goes to the mobs or objects that drop it ("Loot Bloody Note from Defias Thug"). If the item is already in your bags, the stop is left out, so just right-click the item.
 - **Current zone first**, then the nearest stop elsewhere on the continent. The order is a nearest-neighbour pass plus a 2-opt cleanup, so it doesn't zig-zag.
-- **Sweeps camps:** when you reach an objective spot that isn't finished yet, the arrow moves to the next nearest spawn of the same mob or object.
+- **Sweeps camps:** when you reach an objective spot that isn't finished yet, or a mob that drops a quest-starting item, the arrow moves to the next nearest spawn.
 - **Moves on by itself** when you accept a quest, finish an objective, or turn in. Progress like 3/8 → 4/8 only updates the text and never changes the route.
 - **Nearby hint:** if another quest is within 40 yd and closer than your target, the frame says so. Press **Reroute** to go there. With `/qr auto on` it switches without asking.
 - **Skips:** the **Skip** button drops the current quest from the route permanently, for this character, until you `/qr unskip` it. It doesn't touch your quest log or Questie.
@@ -58,7 +59,8 @@ Settings and skips are saved per character.
 ## Limits
 
 - **Straight-line arrow.** No pathfinding: it points through mountains and across water, and it doesn't know about flight paths.
-- **Not routed yet:** quests started from an item, and quests whose spots are inside dungeons.
+- **Not routed yet:** quests whose spots are inside dungeons.
+- **Rare drops count too.** An item-started quest is routed even when its item is a low-chance drop, so you may farm a mob for a while. Use **Skip** if it's not worth it.
 - **Inside instances** the arrow hides and says "position unavailable here", because the game gives no position there.
 - **Zone edges, cities and caves:** "current zone first" goes by what zone the game says you're in, which doesn't always match how Questie files a nearby spawn. If the route skips something right next to you, the Nearby hint plus **Reroute** will take you there.
 - **Built against Questie 12.6.5.** It reads some Questie internals beyond its public API, so a big Questie update could break it. If that happens it prints one "QuestRoute: Disabled: ..." line in chat instead of throwing errors.

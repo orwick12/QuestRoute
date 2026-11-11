@@ -5,7 +5,8 @@
 -- Out: Collect.Gather(filterOpts) -> kept stops, hidden stops (each hidden one has .reason)
 --
 -- A stop = { key, questId, questName, level, kind = "pickup"|"objective"|"turnin", step, points = {point...} }
--- A point = { x, y, instance, mapId, name }  (world yards; `name` = NPC/object/mob name at that spot)
+-- A point = { x, y, instance, mapId, name, drop }  (world yards; `name` = NPC/object/mob name at that spot;
+--           `drop` = name of the quest-starting item that mob/object drops, only on item-started pickups)
 --
 -- Everything Questie-internal is reached through QuestieLoader. If Questie changes and a module is missing,
 -- Collect.ok is false and Collect.err says what, so Core can print one clear message.
@@ -111,6 +112,36 @@ local function giverPoints(giver)
     return points
 end
 
+local function itemCount(itemId)
+    local count = (C_Item and C_Item.GetItemCount) or GetItemCount
+    return count and count(itemId) or 0
+end
+
+-- Item-started quest (Starts.Item = {itemIds}) -> spawns of the mobs/objects that drop the item, each tagged
+-- with the item name. Same sources Questie uses for its "!" icons. Also returns true if a starter item is
+-- already in your bags (then there is nowhere to walk: right-click the item).
+local function itemStarterPoints(points, itemIds)
+    if type(itemIds) ~= "table" or not QuestieDB.GetItem then return false end
+    local inBags = false
+    for _, itemId in pairs(itemIds) do
+        if itemCount(itemId) > 0 then inBags = true end
+        local item = QuestieDB:GetItem(itemId)
+        if item then
+            local first = #points + 1
+            for _, npcId in pairs(item.npcDrops or {}) do
+                local npc = QuestieDB:GetNPC(npcId)
+                if npc then addSpawns(points, npc.spawns, npc.name) end
+            end
+            for _, objectId in pairs(item.objectDrops or {}) do
+                local obj = QuestieDB:GetObject(objectId)
+                if obj then addSpawns(points, obj.spawns, obj.name) end
+            end
+            for i = first, #points do points[i].drop = item.name or "the quest item" end
+        end
+    end
+    return inBags
+end
+
 ------------------------------------------------------------------ stops
 
 local function isComplete(quest)
@@ -175,9 +206,11 @@ function Collect.AllStops()
     end
     for questId, quest in pairs(available) do
         if stillAvailable(questId) then
+            local points = giverPoints(quest.Starts)
+            local inBags = quest.Starts and itemStarterPoints(points, quest.Starts.Item)
             out[#out + 1] = {
                 key = "p:" .. questId, questId = questId, questName = quest.name, level = quest.level,
-                kind = "pickup", step = "Pick up", points = giverPoints(quest.Starts),
+                kind = "pickup", step = "Pick up", points = points, inBags = inBags or nil,
             }
         else
             available[questId] = nil
@@ -186,11 +219,12 @@ function Collect.AllStops()
     return out
 end
 
----Kept stops and hidden stops. Hidden ones carry .reason ("skipped", "too low", "too high", "no location").
+---Kept stops and hidden stops. Hidden ones carry .reason ("skipped", "too low", "too high", "in bags", "no location").
 function Collect.Gather(filterOpts)
     local kept, hidden = {}, {}
     for _, stop in ipairs(Collect.AllStops()) do
         local reason = ns.Router.FilterReason(stop, filterOpts)
+        if not reason and stop.inBags then reason = "in bags" end -- starter item already carried: just use it
         if not reason and #stop.points == 0 then reason = "no location" end
         if reason then
             stop.reason = reason
