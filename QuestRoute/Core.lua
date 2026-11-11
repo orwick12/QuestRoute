@@ -26,6 +26,7 @@ local db
 local route = {}      -- ordered legs
 local target          -- route[1]
 local visited = {}    -- point indices of the target stop already reached
+local nearby          -- the stop named in the "Nearby: ..." hint, if one is showing
 local stopsByKey = {}
 local lastHidden = {}
 local started = false
@@ -48,6 +49,7 @@ end
 local function setTarget(leg)
     target = leg
     visited = {}
+    nearby = nil
     Arrow.SetTarget(leg)
     Arrow.SetHint("")
 end
@@ -60,7 +62,8 @@ local function gather()
     return kept
 end
 
----Recompute the whole route from where you stand. `first` (a stop key) forces that stop to be the target.
+---Recompute the whole route from where you stand. `first` (a stop key) forces that stop to be the target:
+---it gets its spawn nearest to you, and the rest of the route is planned onward from there.
 local function recompute(first)
     local stops = gather()
     local start = playerPoint()
@@ -69,17 +72,39 @@ local function recompute(first)
         setTarget(nil)
         return
     end
-    route = Router.Build(start, stops, { currentMapId = start.mapId, maxStops = 30 })
-    if first then
-        for i, leg in ipairs(route) do
-            if leg.stop.key == first then
-                table.remove(route, i)
-                table.insert(route, 1, leg)
-                break
-            end
+    local forced = first and stopsByKey[first]
+    local forcedPoint = forced and Router.NearestPoint(forced, start)
+    if forcedPoint then
+        local rest = {}
+        for _, stop in ipairs(stops) do
+            if stop.key ~= first then rest[#rest + 1] = stop end
         end
+        route = Router.Build(forcedPoint, rest, { currentMapId = forcedPoint.mapId, maxStops = 29 })
+        table.insert(route, 1, { stop = forced, point = forcedPoint })
+    else
+        route = Router.Build(start, stops, { currentMapId = start.mapId, maxStops = 30 })
     end
     setTarget(route[1])
+end
+
+local function stopName(stop) return stop.questName or ("Quest " .. stop.questId) end
+
+---Reroute button / `/qr reroute`. If the "Nearby" hint is up, go to that quest (that's what the hint promises);
+---otherwise recompute from here, and say so when the best next stop turns out to be the same one.
+local function manualReroute()
+    if nearby and stopsByKey[nearby.key] then
+        local name = stopName(nearby)
+        recompute(nearby.key)
+        print_("Rerouted to nearby quest: " .. name)
+        return
+    end
+    local before = target and target.stop.key
+    recompute()
+    if target and target.stop.key == before then
+        print_("Rerouted: " .. stopName(target.stop) .. " is still the best next stop.")
+    else
+        print_("Rerouted.")
+    end
 end
 
 ---Quest data changed. Keep the current target unless it is gone; just refresh its text and drop finished legs.
@@ -143,13 +168,14 @@ local function tick()
             if d <= nearDist and d < targetDist then nearStop, nearDist = stop, d end
         end
     end
+    nearby = nearStop
     if not nearStop then
         Arrow.SetHint("")
     elseif db.auto then
         recompute(nearStop.key)
-        print_("Rerouted to nearby quest: " .. (nearStop.questName or nearStop.questId))
+        print_("Rerouted to nearby quest: " .. stopName(nearStop))
     else
-        Arrow.SetHint("Nearby: " .. (nearStop.questName or nearStop.questId) .. " — press Reroute")
+        Arrow.SetHint("Nearby: " .. stopName(nearStop) .. " — press Reroute")
     end
 end
 
@@ -276,9 +302,7 @@ local function onSlash(msg)
     cmd = cmd:lower()
     if cmd == "" then
         print_(Arrow.Toggle(db) and "Shown." or "Hidden. /qr to show again.")
-    elseif cmd == "reroute" then
-        recompute()
-        print_("Rerouted.")
+    elseif cmd == "reroute" then manualReroute()
     elseif cmd == "skip" then cmdSkip(arg)
     elseif cmd == "unskip" then cmdUnskip(arg)
     elseif cmd == "skipped" then
@@ -314,7 +338,7 @@ local function start()
     if started then return end
     started = true
     Arrow.Create(db, {
-        reroute = function() recompute(); print_("Rerouted.") end,
+        reroute = function() manualReroute() end,
         skip = function() cmdSkip("") end,
     })
     Collect.onAvailableChanged = queueRefresh

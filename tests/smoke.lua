@@ -76,6 +76,8 @@ local NPCS = {
     [2] = { name = "Far Giver", spawns = { [12] = { { 50, 0 } } }, friendly = true },       -- 500 yd away
     [3] = { name = "Dungeon Guy", spawns = { [12] = { { -1, -1 } } }, friendly = true },    -- dungeon spawn
     [4] = { name = "High Giver", spawns = { [12] = { { 5, 0 } } }, friendly = true },
+    -- 2000 yd away and filed under another zone (13): what a zone border / city / cave looks like
+    [5] = { name = "Border Giver", spawns = { [13] = { { 200, 0 } } }, friendly = true },
 }
 local function mkQuest(id, name, level, starter, finisher)
     return { Id = id, name = name, level = level, Starts = { NPC = { starter } }, Finisher = { NPC = { finisher } },
@@ -86,6 +88,7 @@ local DBQUESTS = {
     [101] = mkQuest(101, "Far Pickup", 10, 2, 2),
     [102] = mkQuest(102, "Dungeon Pickup", 10, 3, 3),
     [103] = mkQuest(103, "Way Too High", 20, 4, 4),
+    [104] = mkQuest(104, "Border Pickup", 10, 5, 5),
 }
 -- A quest in the log with a kill objective whose spawns are at 20 yd and 60 yd.
 local logQuest = mkQuest(200, "Kobold Stew", 10, 1, 1)
@@ -127,7 +130,7 @@ end
 check(ns.Collect.ok, "Collect imported all Questie modules (err=" .. tostring(ns.Collect.err) .. ")")
 
 -- Questie draws its available quests (this goes through our hook)
-for _, id in ipairs({ 100, 101, 102, 103 }) do AvailableQuests.DrawAvailableQuest(DBQUESTS[id]) end
+for _, id in ipairs({ 100, 101, 102, 103, 104 }) do AvailableQuests.DrawAvailableQuest(DBQUESTS[id]) end
 check(ns.Collect.available[100] ~= nil, "hook mirrored an available quest")
 
 -- ADDON_LOADED, then Questie ready
@@ -236,6 +239,35 @@ for _, f in ipairs(frames) do
     if t and t:find("Nearby:", 1, true) then hint = t end
 end
 check(hint ~= nil, "manual mode shows a 'Nearby' hint instead of rerouting (" .. tostring(hint) .. ")")
+
+-- pressing Reroute while the hint is up goes to the hinted quest, even when it's filed under another zone
+local function currentHint()
+    for _, f in ipairs(frames) do
+        local t = rawget(f, "text")
+        if t and t:find("Nearby:", 1, true) then return t end
+    end
+end
+slash("reroute")
+player.x, player.y = 1990, 0
+tick()
+check((currentHint() or ""):find("Border Pickup", 1, true) ~= nil, "hint names the other-zone quest (" .. tostring(currentHint()) .. ")")
+chat = {}
+slash("reroute")
+check(chatHas("Rerouted to nearby quest: Border Pickup"), "manual Reroute follows the hint (" .. lastChat() .. ")")
+chat = {}
+slash("list")
+check(chatHas("1. [pickup] Border Pickup"), "hinted quest is now the target")
+tick()
+check((currentHint() or "") == "", "hint cleared once its quest is the target")
+
+-- Reroute with no hint that keeps the same target says so, instead of a bare "Rerouted."
+player.x, player.y = 0, 0
+slash("reroute")
+tick()
+check((currentHint() or "") == "", "no hint at the start position")
+chat = {}
+slash("reroute")
+check(chatHas("still the best next stop"), "same-target reroute explains itself (" .. lastChat() .. ")")
 
 -- misc commands don't error
 for _, c in ipairs({ "", "", "help", "lock", "lock", "radius 60", "radius x", "lowturnins off", "skipped", "zzz" }) do

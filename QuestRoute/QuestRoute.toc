@@ -2,7 +2,7 @@
 ## Title: QuestRoute
 ## Notes: Routes your quests using Questie's data and points an arrow at the next stop.
 ## Author: Brian
-## Version: 0.1.0
+## Version: 0.1.1
 ## Dependencies: Questie
 ## SavedVariablesPerCharacter: QuestRouteDB
 
