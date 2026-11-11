@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: QuestRoute
+## Notes: Routes your quests using Questie's data and points an arrow at the next stop.
+## Author: Brian
+## Version: 0.1.0
+## Dependencies: Questie
+## SavedVariablesPerCharacter: QuestRouteDB
+
+Router.lua
+Collect.lua
+Arrow.lua
+Core.lua
