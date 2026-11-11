@@ -24,7 +24,10 @@ local KIND_COLOR = {
 
 local function stepLine(leg)
     local stop, who = leg.stop, leg.point and leg.point.name
-    if leg.point and leg.point.drop then return "Loot " .. leg.point.drop .. " from " .. (who or "?") end
+    if leg.point and leg.point.drop then
+        local chance = ns.Router.FormatChance(leg.point.chance)
+        return "Loot " .. leg.point.drop .. " from " .. (who or "?") .. (chance and (" (" .. chance .. ")") or "")
+    end
     if stop.kind == "pickup" then return "Pick up from " .. (who or "quest giver") end
     if stop.kind == "turnin" then return "Turn in to " .. (who or "quest ender") end
     if who and who ~= "" then return stop.step .. "  (" .. who .. ")" end

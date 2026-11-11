@@ -150,6 +150,43 @@ test("unknown or scaling levels (nil, 0, -1) are kept", function()
     eq(Router.FilterReason(Q(-1), opts()), nil)
 end)
 
+------------------------------------------------------------------ drop chance
+
+local function D(x, chance, weight)
+    local p = P(x, 0)
+    p.drop, p.chance, p.weight = "Note", chance, weight
+    return p
+end
+
+test("weighted point: a low-chance mob counts as further away, but the real distance is returned", function()
+    -- 20% mob at 40 yd vs 2% mob (weight 10) at 10 yd: 40 < 10*10, so the 20% mob wins
+    local stop = S("a", { D(10, 2, 10), D(40, 20, 1) })
+    local p, i, d = Router.NearestPoint(stop, START)
+    eq(i, 2, "picked index")
+    eq(d, 40, "real distance")
+end)
+
+test("weighted point still wins when it is close enough", function()
+    local stop = S("a", { D(3, 2, 10), D(40, 20, 1) }) -- 3*10 = 30 < 40
+    local _, i = Router.NearestPoint(stop, START)
+    eq(i, 1)
+end)
+
+test("FilterDropPoints drops known chances below the minimum, keeps unknown and non-drop points", function()
+    local kept, removed = Router.FilterDropPoints({ D(1, 2), D(2, 5), D(3, nil), P(4, 0) }, 5)
+    eq(removed, 1, "removed")
+    eq(#kept, 3, "kept")
+    eq(kept[1].x, 2); eq(kept[2].x, 3); eq(kept[3].x, 4)
+end)
+
+test("FilterDropPoints with 0 or nil minimum keeps everything", function()
+    local pts = { D(1, 0.1), D(2, nil) }
+    local kept, removed = Router.FilterDropPoints(pts, 0)
+    eq(#kept, 2); eq(removed, 0)
+    kept, removed = Router.FilterDropPoints(pts, nil)
+    eq(#kept, 2); eq(removed, 0)
+end)
+
 ------------------------------------------------------------------ runner
 
 local passed, failed = 0, 0

@@ -16,7 +16,8 @@ It reads [Questie](https://github.com/Questie/Questie)'s data (your quest log, t
 ## What it does
 
 - **Routes three kinds of stops:** quest pickups ("!" givers), quest objectives (kill/collect spots), and turn-ins.
-- **Item-started quests too:** for a quest that starts from a dropped item, the arrow goes to the mobs or objects that drop it ("Loot Bloody Note from Defias Thug"). If the item is already in your bags, the stop is left out, so just right-click the item.
+- **Item-started quests too:** for a quest that starts from a dropped item, the arrow goes to the mobs or objects that drop it ("Loot Bloody Note from Defias Thug (20%)"). If the item is already in your bags, the stop is left out, so just right-click the item.
+- **Drop chance:** when Questie knows a mob's chance of dropping the item, it shows on the arrow and in `/qr list`, and better-chance mobs come first. A mob with half the best chance counts as twice as far away. `/qr mindrop <pct>` leaves out mobs below that chance.
 - **Current zone first**, then the nearest stop elsewhere on the continent. The order is a nearest-neighbour pass plus a 2-opt cleanup, so it doesn't zig-zag.
 - **Sweeps camps:** when you reach an objective spot that isn't finished yet, or a mob that drops a quest-starting item, the arrow moves to the next nearest spawn.
 - **Moves on by itself** when you accept a quest, finish an objective, or turn in. Progress like 3/8 → 4/8 only updates the text and never changes the route.
@@ -48,6 +49,7 @@ If you use the green **Code → Download ZIP** button instead, copy only the inn
 | `/qr minlevel <n>` | Leave out quests more than *n* levels below you (default 5, 0 = off) |
 | `/qr maxlevel <n>` | Leave out quests more than *n* levels above you (default 3, 0 = off) |
 | `/qr lowturnins on\|off` | Keep turn-ins of low quests in the route (default on) |
+| `/qr mindrop <pct>` | Leave out mobs whose known chance of dropping a quest-starting item is below *pct* %. Mobs with an unknown chance are always kept. If no mob is left, the quest is hidden as "low drop" (default 0 = off) |
 | `/qr auto on\|off` | Switch to nearby quests automatically (default off) |
 | `/qr radius <yards>` | How close counts as "nearby" (default 40) |
 | `/qr lock` | Lock or unlock the frame. Drag it to move it while unlocked |
@@ -60,7 +62,7 @@ Settings and skips are saved per character.
 
 - **Straight-line arrow.** No pathfinding: it points through mountains and across water, and it doesn't know about flight paths.
 - **Not routed yet:** quests whose spots are inside dungeons.
-- **Rare drops count too.** An item-started quest is routed even when its item is a low-chance drop, so you may farm a mob for a while. Use **Skip** if it's not worth it.
+- **Drop chances are often unknown.** Questie's drop-rate data mostly covers items needed for quest objectives, so many quest-starting items (Gold Pickup Schedule, for example) have no %. Those mobs show no chance, aren't affected by `/qr mindrop`, and can still be rare drops. Use **Skip** if one isn't worth farming.
 - **Inside instances** the arrow hides and says "position unavailable here", because the game gives no position there.
 - **Zone edges, cities and caves:** "current zone first" goes by what zone the game says you're in, which doesn't always match how Questie files a nearby spawn. If the route skips something right next to you, the Nearby hint plus **Reroute** will take you there.
 - **Built against Questie 12.6.5.** It reads some Questie internals beyond its public API, so a big Questie update could break it. If that happens it prints one "QuestRoute: Disabled: ..." line in chat instead of throwing errors.

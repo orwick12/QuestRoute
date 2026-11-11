@@ -82,8 +82,11 @@ local NPCS = {
     [5] = { name = "Border Giver", spawns = { [13] = { { 200, 0 } } }, friendly = true },
     -- drops the item that starts quest 105; two spawns 50 yd apart, far from everything else
     [6] = { name = "Defias Thug", spawns = { [12] = { { 300, 0 }, { 305, 0 } } }, friendly = false },
+    -- also drops it, closer to the drop camp but only a 2% chance (Defias Thug: 20%)
+    [7] = { name = "Defias Pillager", spawns = { [12] = { { 297, 0 } } }, friendly = false },
 }
-local ITEMS = { [900] = { name = "Bloody Note", npcDrops = { 6 } } }
+local ITEMS = { [900] = { name = "Bloody Note", npcDrops = { 6, 7 } } }
+local DROPRATES = { ["900:6"] = { 20, "wowhead" }, ["900:7"] = { 2, "wowhead" } }
 local function mkQuest(id, name, level, starter, finisher)
     return { Id = id, name = name, level = level, Starts = { NPC = { starter } }, Finisher = { NPC = { finisher } },
         Objectives = {}, SpecialObjectives = {}, IsComplete = function(self) return self.complete or 0 end }
@@ -113,6 +116,7 @@ local QuestieDB = {
     GetNPC = function(_, id) return NPCS[id] end,
     GetObject = function() return nil end,
     GetItem = function(_, id) return ITEMS[id] end,
+    GetItemDroprate = function(itemId, npcId) return DROPRATES[itemId .. ":" .. npcId] end,
     GetQuest = function(id) return DBQUESTS[id] end,
 }
 local ZoneDB = { GetUiMapIdByAreaId = function(_, areaId) return areaId end }
@@ -287,12 +291,34 @@ chat = {}
 slash("list")
 check(chatHas("1. [pickup] Mysterious Note") and chatHas("@ Defias Thug"), "item-started quest targets a mob that drops the item")
 arrowFrame.scripts.OnUpdate(arrowFrame, 1)
-check(shownTexts():find("Loot Bloody Note from Defias Thug", 1, true) ~= nil, "arrow says which item to loot from whom (" .. shownTexts() .. ")")
-check(shownTexts():find("| 40 yd", 1, true) ~= nil, "arrow points at the nearest drop spawn (" .. shownTexts() .. ")")
+check(shownTexts():find("Loot Bloody Note from Defias Thug (20%)", 1, true) ~= nil, "arrow says what to loot, from whom, and the drop chance (" .. shownTexts() .. ")")
+check(shownTexts():find("| 40 yd", 1, true) ~= nil, "arrow prefers the 20% mob at 40 yd over the 2% mob at 10 yd (" .. shownTexts() .. ")")
+check(chatHas("@ Defias Thug (20%)"), "/qr list shows the drop chance")
 player.x, player.y = 3000, 0
 tick()
 arrowFrame.scripts.OnUpdate(arrowFrame, 1)
 check(shownTexts():find("| 50 yd", 1, true) ~= nil, "reaching one drop spawn sweeps to the next (" .. shownTexts() .. ")")
+-- /qr mindrop: hide mobs below the chance; hide the whole stop when none are left
+check(QuestRouteDB.minDrop == 0, "mindrop defaults to off")
+slash("mindrop 5")
+check(QuestRouteDB.minDrop == 5, "/qr mindrop 5 saved")
+chat = {}
+slash("list all")
+check(chatHas("[pickup] Mysterious Note") and not chatHas("(low drop)"), "at 5% the 20% mob keeps the quest on the route")
+slash("mindrop 25")
+chat = {}
+slash("list all")
+check(chatHas("(low drop) [pickup] Mysterious Note"), "at 25% every source is filtered: hidden as 'low drop'")
+slash("mindrop x")
+check(chatHas("Usage: /qr mindrop"), "bad mindrop input shows usage")
+chat = {}
+slash("help")
+check(chatHas("/qr mindrop <pct>") and chatHas("(now 25%, 0 = off)"), "/qr help shows the mindrop setting")
+slash("mindrop 0")
+chat = {}
+slash("list all")
+check(not chatHas("(low drop)"), "mindrop 0 turns the filter off")
+
 bags[900] = 1
 eventFrame.scripts.OnEvent(eventFrame, "BAG_UPDATE_DELAYED")
 runTimers()

@@ -18,6 +18,7 @@ local DEFAULTS = {
     minBelow = 5,    -- skip quests more than this many levels below you (0 = off)
     maxAbove = 3,    -- skip quests more than this many levels above you (0 = off)
     lowTurnins = true,
+    minDrop = 0,     -- hide mobs whose known drop chance for a quest-starting item is below this % (0 = off)
     skipped = {},    -- [questId] = quest name
 }
 local RETARGET_YARDS = 15 -- reaching an unfinished objective (or item-drop) spot moves the arrow to the next spawn
@@ -36,7 +37,7 @@ local function print_(msg) DEFAULT_CHAT_FRAME:AddMessage("|cff33ccffQuestRoute:|
 local function filterOpts()
     return {
         playerLevel = UnitLevel("player"), minBelow = db.minBelow, maxAbove = db.maxAbove,
-        lowTurnins = db.lowTurnins, skipped = db.skipped,
+        lowTurnins = db.lowTurnins, skipped = db.skipped, minDrop = db.minDrop,
     }
 end
 
@@ -256,6 +257,8 @@ end
 local function legLine(i, leg)
     local s = leg.stop
     local where = leg.point and leg.point.name and (" @ " .. leg.point.name) or ""
+    local chance = leg.point and leg.point.drop and Router.FormatChance(leg.point.chance)
+    if chance then where = where .. " (" .. chance .. ")" end
     return string.format("%2d. [%s] %s — %s%s", i, s.kind, s.questName or s.questId, s.step, where)
 end
 
@@ -281,6 +284,7 @@ local HELP = {
     "/qr minlevel <n> — skip quests more than n levels below you (now %d, 0 = off)",
     "/qr maxlevel <n> — skip quests more than n levels above you (now %d, 0 = off)",
     "/qr lowturnins on|off — still turn in low quests (now %s)",
+    "/qr mindrop <pct> — skip mobs whose drop chance for a quest-starting item is below pct (now %s, 0 = off)",
     "/qr auto on|off — auto-reroute near other quests (now %s)",
     "/qr radius <yards> — distance for auto-reroute / nearby hint (now %d)",
     "/qr lock — lock/unlock the frame position",
@@ -289,7 +293,7 @@ local HELP = {
 
 local function cmdHelp()
     local vals = { [5] = db.minBelow, [6] = db.maxAbove, [7] = db.lowTurnins and "on" or "off",
-        [8] = db.auto and "on" or "off", [9] = db.radius }
+        [8] = db.minDrop .. "%", [9] = db.auto and "on" or "off", [10] = db.radius }
     for i, line in ipairs(HELP) do print_(vals[i] and line:format(vals[i]) or line) end
 end
 
@@ -314,6 +318,16 @@ local function onSlash(msg)
     elseif cmd == "lowturnins" then
         db.lowTurnins = onOff(arg, db.lowTurnins)
         print_("Low-level turn-ins " .. (db.lowTurnins and "kept." or "skipped."))
+        recompute()
+    elseif cmd == "mindrop" then
+        local n = tonumber((arg:gsub("%%", "")))
+        if not n or n < 0 or n > 100 then
+            print_("Minimum drop chance is " .. db.minDrop .. "% (0 = off). Usage: /qr mindrop <0-100>")
+            return
+        end
+        db.minDrop = n
+        print_(n == 0 and "Drop-chance filter off."
+            or ("Skipping mobs with a known drop chance under " .. n .. "%. Unknown chances are kept."))
         recompute()
     elseif cmd == "auto" then
         db.auto = onOff(arg, db.auto)

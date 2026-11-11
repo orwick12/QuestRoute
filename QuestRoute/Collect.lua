@@ -6,7 +6,9 @@
 --
 -- A stop = { key, questId, questName, level, kind = "pickup"|"objective"|"turnin", step, points = {point...} }
 -- A point = { x, y, instance, mapId, name, drop }  (world yards; `name` = NPC/object/mob name at that spot;
---           `drop` = name of the quest-starting item that mob/object drops, only on item-started pickups)
+--           `drop` = name of the quest-starting item that mob/object drops, only on item-started pickups;
+--           `chance` = that mob's drop chance in percent, when Questie knows it; `weight` = best chance among the
+--           item's sources / this chance, so the router treats a worse-chance mob as further away)
 --
 -- Everything Questie-internal is reached through QuestieLoader. If Questie changes and a module is missing,
 -- Collect.ok is false and Collect.err says what, so Core can print one clear message.
@@ -112,6 +114,15 @@ local function giverPoints(giver)
     return points
 end
 
+-- Drop chance in percent from Questie's drop tables, or nil when unknown (most quest-starting items aren't in them).
+local function dropChance(itemId, npcId)
+    if not QuestieDB.GetItemDroprate then return nil end
+    local ok, data = pcall(QuestieDB.GetItemDroprate, itemId, npcId)
+    local rate = ok and type(data) == "table" and tonumber(data[1]) or nil
+    if rate and rate > 0 then return rate end
+    return nil
+end
+
 local function itemCount(itemId)
     local count = (C_Item and C_Item.GetItemCount) or GetItemCount
     return count and count(itemId) or 0
@@ -127,16 +138,29 @@ local function itemStarterPoints(points, itemIds)
         if itemCount(itemId) > 0 then inBags = true end
         local item = QuestieDB:GetItem(itemId)
         if item then
-            local first = #points + 1
+            local first, best = #points + 1, nil
             for _, npcId in pairs(item.npcDrops or {}) do
                 local npc = QuestieDB:GetNPC(npcId)
-                if npc then addSpawns(points, npc.spawns, npc.name) end
+                if npc then
+                    local from = #points + 1
+                    addSpawns(points, npc.spawns, npc.name)
+                    local chance = dropChance(itemId, npcId)
+                    if chance then
+                        for i = from, #points do points[i].chance = chance end
+                        if not best or chance > best then best = chance end
+                    end
+                end
             end
+            -- Questie's drop rates are keyed by NPC id only, so objects get no chance (unknown).
             for _, objectId in pairs(item.objectDrops or {}) do
                 local obj = QuestieDB:GetObject(objectId)
                 if obj then addSpawns(points, obj.spawns, obj.name) end
             end
-            for i = first, #points do points[i].drop = item.name or "the quest item" end
+            for i = first, #points do
+                local p = points[i]
+                p.drop = item.name or "the quest item"
+                if p.chance and best then p.weight = best / p.chance end
+            end
         end
     end
     return inBags
@@ -219,11 +243,16 @@ function Collect.AllStops()
     return out
 end
 
----Kept stops and hidden stops. Hidden ones carry .reason ("skipped", "too low", "too high", "in bags", "no location").
+---Kept stops and hidden stops. Hidden ones carry .reason
+---("skipped", "too low", "too high", "in bags", "low drop", "no location").
 function Collect.Gather(filterOpts)
     local kept, hidden = {}, {}
     for _, stop in ipairs(Collect.AllStops()) do
         local reason = ns.Router.FilterReason(stop, filterOpts)
+        local hadPoints = #stop.points > 0
+        local removed
+        stop.points, removed = ns.Router.FilterDropPoints(stop.points, filterOpts.minDrop)
+        if not reason and hadPoints and removed > 0 and #stop.points == 0 then reason = "low drop" end
         if not reason and stop.inBags then reason = "in bags" end -- starter item already carried: just use it
         if not reason and #stop.points == 0 then reason = "no location" end
         if reason then

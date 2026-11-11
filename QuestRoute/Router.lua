@@ -2,8 +2,10 @@
 -- PURE LUA: no WoW API calls in this file, so it can be unit-tested offline (tests/test_router.lua).
 --
 -- Types used here:
---   point = { x, y, instance, mapId }   world coordinates in yards (from HereBeDragons), instance = continent,
---                                        mapId = uiMapId of the zone the point is in
+--   point = { x, y, instance, mapId, weight }  world coordinates in yards (from HereBeDragons),
+--                                        instance = continent, mapId = uiMapId of the zone the point is in,
+--                                        weight (optional, >= 1) = "counts as this many times further away"
+--                                        (low drop chance); real distances are still what gets returned
 --   stop  = { key, points = {point...}, ... }  anything else on the stop is passed through untouched
 --   leg   = { stop = stop, point = point }     one step of a route, with the concrete point chosen
 
@@ -20,16 +22,18 @@ end
 local Distance = Router.Distance
 
 ---Nearest point of `stop` to `from`, ignoring indices in `exclude` (a set) and points on another instance.
+---"Nearest" compares distance * point.weight; the distance returned is the real one.
 ---@return table|nil point, number|nil index, number distance
 function Router.NearestPoint(stop, from, exclude, onlyMapId)
-    local best, bestIndex, bestDist = nil, nil, huge
+    local best, bestIndex, bestDist, bestCost = nil, nil, huge, huge
     for i, p in ipairs(stop.points) do
         if (not exclude or not exclude[i])
             and p.instance == from.instance
             and (not onlyMapId or p.mapId == onlyMapId) then
             local d = Distance(from, p)
-            if d < bestDist then
-                best, bestIndex, bestDist = p, i, d
+            local cost = p.weight and d * p.weight or d
+            if cost < bestCost then
+                best, bestIndex, bestDist, bestCost = p, i, d, cost
             end
         end
     end
@@ -131,6 +135,29 @@ function Router.Build(start, stops, opts)
         repick(last, out, nLocal + 1, #out)
     end
     return out
+end
+
+---Drop points (p.drop set) whose known drop chance (p.chance, percent) is below `minDrop`. Points with an unknown
+---chance, and points that aren't item drops, are always kept. minDrop 0/nil = keep everything.
+---@return table[] kept, number removed
+function Router.FilterDropPoints(points, minDrop)
+    if not minDrop or minDrop <= 0 then return points, 0 end
+    local kept, removed = {}, 0
+    for _, p in ipairs(points) do
+        if p.drop and p.chance and p.chance < minDrop then
+            removed = removed + 1
+        else
+            kept[#kept + 1] = p
+        end
+    end
+    return kept, removed
+end
+
+---"20%", "0.4%", or nil when the chance is unknown.
+function Router.FormatChance(chance)
+    if not chance then return nil end
+    if chance < 1 then return string.format("%.1f%%", chance) end
+    return string.format("%d%%", math.floor(chance + 0.5))
 end
 
 ---Why a quest/stop is left out of the route, or nil to keep it.
