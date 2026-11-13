@@ -6,9 +6,13 @@
 --   * you press Reroute or type /qr reroute
 --   * auto-reroute is on and another stop is within `radius` yards and closer than the target
 -- Progress on the current target (3/8 -> 4/8) only refreshes the label; it does not reroute.
+--
+-- Focus mode (/qr focus): the normal route is set aside and the arrow follows one fixed chain from Focus.lua (the
+-- Cozy Sleeping Bag) step by step until it's done, then switches itself off. It's saved per character, so it
+-- survives /reload and logging out.
 
 local addonName, ns = ...
-local Router, Collect, Arrow = ns.Router, ns.Collect, ns.Arrow
+local Router, Collect, Arrow, Focus = ns.Router, ns.Collect, ns.Arrow, ns.Focus
 
 local DEFAULTS = {
     hidden = false,
@@ -20,8 +24,12 @@ local DEFAULTS = {
     lowTurnins = true,
     minDrop = 0,     -- hide mobs whose known drop chance for a quest-starting item is below this % (0 = off)
     skipped = {},    -- [questId] = quest name
+    focus = false,   -- focus mode on (the chain's key) or false
+    focusSkip = 0,   -- "Next step" presses: the current focus step is at least this index
+    focusReached = {}, -- [stepId] = true for focus travel waypoints you've passed
 }
 local RETARGET_YARDS = 15 -- reaching an unfinished objective (or item-drop) spot moves the arrow to the next spawn
+local VIA_YARDS = 25      -- reaching a focus travel waypoint (within this) moves on to the next step
 
 local db
 local route = {}      -- ordered legs
@@ -63,9 +71,128 @@ local function gather()
     return kept
 end
 
+------------------------------------------------------------------ focus mode (the chain itself is in Focus.lua)
+
+local recompute -- defined below; focus mode hands back to it when it switches off
+
+local focusCheck = {
+    inLog = function(questId) return Collect.InLog(questId) end,
+    done = function(questId) return Collect.IsCompleted(questId) end,
+    reached = function(stepId) return db.focusReached[stepId] end,
+}
+
+---The chain for this character's faction, and the index of the step to do now. Your quest log decides the step;
+---"Next step" presses can push it further on, never back.
+local function focusPosition()
+    local steps = Focus.Steps(UnitFactionGroup("player"))
+    return steps, math.max(Focus.Current(steps, focusCheck), db.focusSkip or 0)
+end
+
+local function focusOff(msg)
+    db.focus = false
+    Arrow.SetFocus(false)
+    if msg then print_(msg) end
+    recompute()
+end
+
+---Point the arrow at the current focus step. Does nothing if the step hasn't changed, unless `force`.
+local function focusUpdate(force)
+    local steps, i = focusPosition()
+    if i > #steps then
+        db.focusSkip, db.focusReached = 0, {}
+        focusOff(Focus.NAME .. " chain done! Focus off, back to the normal route.")
+        return
+    end
+    if not force and target and target.stop.focusIndex == i then return end
+    local s = steps[i]
+    local leg = {
+        stop = { key = "f:" .. s.id, stepId = s.id, questName = s.title, kind = s.kind, step = s.text,
+            focus = true, focusIndex = i, via = s.via, notes = s.notes, where = Focus.Where(s) },
+        point = Collect.ZonePoint(s.mapId, s.x, s.y),
+    }
+    route = { leg }
+    setTarget(leg)
+    Arrow.SetHint(string.format("Focus %d/%d: %s", i, #steps, Focus.Where(s)))
+    print_(string.format("Focus %d/%d: %s — %s (%s)", i, #steps, s.title, s.text, Focus.Where(s)))
+    for _, n in ipairs(s.notes) do print_("  " .. n) end
+    if not leg.point then print_("  Couldn't place this on the map; head for the coordinates above.") end
+end
+
+---Once a second in focus mode: pick up quest log changes, and tick off a travel waypoint once you reach it (or are
+---already well past it: much closer to the next stop than the waypoint is).
+local function focusTick()
+    focusUpdate()
+    if not target or not target.stop.via then return end
+    local here, tp = playerPoint(), target.point
+    if not here or not tp or here.instance ~= tp.instance then return end
+    local reached = Router.Distance(here, tp) <= VIA_YARDS
+    if not reached then
+        local steps, i = focusPosition()
+        local nxt = steps[i + 1]
+        local np = nxt and Collect.ZonePoint(nxt.mapId, nxt.x, nxt.y)
+        reached = np and np.instance == here.instance
+            and Router.Distance(here, np) < 0.5 * Router.Distance(tp, np) or false
+    end
+    if reached then
+        db.focusReached[target.stop.stepId] = true
+        focusUpdate()
+    end
+end
+
+local function focusNext()
+    local _, i = focusPosition()
+    db.focusSkip = i + 1
+    print_("Marked focus step " .. i .. " done. /qr focus reset undoes this.")
+    focusUpdate(true)
+end
+
+local function cmdFocus(arg)
+    if arg == "notes" then
+        if not db.focus then print_("Focus is off. /qr focus to start it.") return end
+        focusUpdate(true) -- re-prints the step and its notes
+        print_("  " .. Focus.ARROW_NOTE)
+        return
+    end
+    if arg == "next" then
+        if db.focus then focusNext() else print_("Focus is off. /qr focus to start it.") end
+        return
+    end
+    if arg == "reset" then
+        db.focusSkip = 0 -- only undoes "Next step"; waypoints you really reached stay reached
+        print_("Focus: Next step presses undone, back to what your quest log shows.")
+        if db.focus then focusUpdate(true) end
+        return
+    end
+    local on = arg == "on" or (arg ~= "off" and not db.focus)
+    if not on then
+        if db.focus then focusOff("Focus off, back to the normal route.") else print_("Focus is already off.") end
+        return
+    end
+    local steps, i = focusPosition()
+    if i > #steps then
+        print_(Focus.NAME .. " chain is already done on this character.")
+        return
+    end
+    if UnitLevel("player") < Focus.MIN_LEVEL then
+        print_("Heads up: the chain can't be started below level " .. Focus.MIN_LEVEL .. ".")
+    end
+    db.focus = "sleepingbag"
+    Arrow.SetFocus(true)
+    print_("Focus on: " .. Focus.NAME .. " (" .. (UnitFactionGroup("player") or "?") .. "). The arrow follows only "
+        .. "this chain until it's done. /qr focus again to turn it off.")
+    print_(Focus.ARROW_NOTE .. " Hover the arrow frame for the current step's notes.")
+    focusUpdate(true)
+end
+
+------------------------------------------------------------------ normal route
+
 ---Recompute the whole route from where you stand. `first` (a stop key) forces that stop to be the target:
 ---it gets its spawn nearest to you, and the rest of the route is planned onward from there.
-local function recompute(first)
+function recompute(first)
+    if db.focus then
+        focusUpdate(true)
+        return
+    end
     local stops = gather()
     local start = playerPoint()
     if not start then
@@ -93,6 +220,10 @@ local function stopName(stop) return stop.questName or ("Quest " .. stop.questId
 ---Reroute button / `/qr reroute`. If the "Nearby" hint is up, go to that quest (that's what the hint promises);
 ---otherwise recompute from here, and say so when the best next stop turns out to be the same one.
 local function manualReroute()
+    if db.focus then
+        focusUpdate(true)
+        return
+    end
     if nearby and stopsByKey[nearby.key] then
         local name = stopName(nearby)
         recompute(nearby.key)
@@ -111,6 +242,10 @@ end
 ---Quest data changed. Keep the current target unless it is gone; just refresh its text and drop finished legs.
 local function refresh()
     if not started then return end
+    if db.focus then
+        focusUpdate()
+        return
+    end
     gather()
     if not target or not stopsByKey[target.stop.key] then
         recompute()
@@ -140,7 +275,12 @@ end
 
 -- Once a second: sweep objective spawns, and handle "another quest is close".
 local function tick()
-    if not started or not target then return end
+    if not started then return end
+    if db.focus then
+        focusTick()
+        return
+    end
+    if not target then return end
     local here = playerPoint()
     if not here then return end
     local tp = target.point
@@ -199,6 +339,10 @@ local function skipQuest(questId, name)
 end
 
 local function cmdSkip(arg)
+    if arg == "" and db.focus then -- the Skip button reads "Next step" in focus mode
+        focusNext()
+        return
+    end
     if arg == "" then
         if not target then print_("Nothing to skip.") return end
         skipQuest(target.stop.questId, target.stop.questName)
@@ -289,11 +433,15 @@ local HELP = {
     "/qr radius <yards> — distance for auto-reroute / nearby hint (now %d)",
     "/qr lock — lock/unlock the frame position",
     "/qr list [all] — print the route (all = also show hidden stops and why)",
+    "/qr focus [on|off] — follow only the Cozy Sleeping Bag chain until it's done (now %s). Also /qr bag",
+    "/qr focus next — mark the current focus step done; /qr focus reset — undo that",
+    "/qr focus notes — print the guide notes for the current step again (or hover the arrow frame)",
 }
 
 local function cmdHelp()
     local vals = { [5] = db.minBelow, [6] = db.maxAbove, [7] = db.lowTurnins and "on" or "off",
-        [8] = db.minDrop .. "%", [9] = db.auto and "on" or "off", [10] = db.radius }
+        [8] = db.minDrop .. "%", [9] = db.auto and "on" or "off", [10] = db.radius,
+        [13] = db.focus and "on" or "off" }
     for i, line in ipairs(HELP) do print_(vals[i] and line:format(vals[i]) or line) end
 end
 
@@ -339,6 +487,7 @@ local function onSlash(msg)
         db.locked = not db.locked
         print_(db.locked and "Frame locked." or "Frame unlocked (drag to move).")
     elseif cmd == "list" then cmdList(arg:lower())
+    elseif cmd == "focus" or cmd == "bag" then cmdFocus(arg:lower())
     else cmdHelp() end
 end
 
@@ -355,6 +504,7 @@ local function start()
         reroute = function() manualReroute() end,
         skip = function() cmdSkip("") end,
     })
+    Arrow.SetFocus(db.focus)
     Collect.onAvailableChanged = queueRefresh
     if Questie.API.RegisterForQuestUpdates then Questie.API.RegisterForQuestUpdates(queueRefresh) end
     if next(Collect.available) == nil then Collect.RequestAvailablePass() end

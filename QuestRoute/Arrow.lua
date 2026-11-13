@@ -12,7 +12,8 @@ local floor = math.floor
 local UPDATE_INTERVAL = 0.05
 local ARRIVED_YARDS = 15
 
-local frame, arrowTex, titleText, stepText, distText, hintText
+local frame, arrowTex, titleText, stepText, distText, hintText, skipButton
+local focusMode = false -- focus mode: the Skip button means "next step" instead
 local target -- current leg
 local elapsedSince = 0
 
@@ -20,10 +21,12 @@ local KIND_COLOR = {
     pickup = { 1, 0.82, 0 },     -- yellow, like a "!" quest giver
     objective = { 0.4, 0.8, 1 }, -- blue
     turnin = { 0.3, 1, 0.3 },    -- green
+    travel = { 0.75, 0.6, 1 },   -- purple: a focus-mode waypoint with no quest behind it
 }
 
 local function stepLine(leg)
     local stop, who = leg.stop, leg.point and leg.point.name
+    if stop.focus then return stop.step end -- focus-mode steps carry their own wording
     if leg.point and leg.point.drop then
         local chance = ns.Router.FormatChance(leg.point.chance)
         return "Loot " .. leg.point.drop .. " from " .. (who or "?") .. (chance and (" (" .. chance .. ")") or "")
@@ -47,7 +50,13 @@ local function onUpdate(_, elapsed)
     if not px or not facing or instance ~= p.instance then
         -- No position (e.g. inside an instance) or target on another continent.
         arrowTex:Hide()
-        distText:SetText(not px and "position unavailable here" or "on another continent")
+        if not px then
+            distText:SetText("position unavailable here")
+        elseif target.stop.notes then -- focus step: the notes say which boat or zeppelin to take
+            distText:SetText("other continent: boat/zeppelin, see notes")
+        else
+            distText:SetText("on another continent")
+        end
         return
     end
 
@@ -130,15 +139,34 @@ function Arrow.Create(db, handlers)
 
     local reroute = makeButton(frame, "Reroute", 80, handlers.reroute)
     reroute:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 10, 6)
-    local skip = makeButton(frame, "Skip", 80, handlers.skip)
-    skip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 6)
-    skip:SetScript("OnEnter", function(self)
+    skipButton = makeButton(frame, "Skip", 80, handlers.skip)
+    skipButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 6)
+    skipButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("Skip this quest")
-        GameTooltip:AddLine("Leaves it out of the route until you /qr unskip it.", 1, 1, 1, true)
+        if focusMode then
+            GameTooltip:SetText("Next step")
+            GameTooltip:AddLine("Mark this step done and point at the next one. Use it if the arrow didn't move on "
+                .. "by itself. /qr focus reset undoes it.", 1, 1, 1, true)
+        else
+            GameTooltip:SetText("Skip this quest")
+            GameTooltip:AddLine("Leaves it out of the route until you /qr unskip it.", 1, 1, 1, true)
+        end
         GameTooltip:Show()
     end)
-    skip:SetScript("OnLeave", GameTooltip_Hide)
+    skipButton:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Hovering the frame on a focus step shows that step's guide notes.
+    frame:SetScript("OnEnter", function(self)
+        local stop = target and target.stop
+        if not (stop and stop.notes) then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:SetText(stop.questName or "QuestRoute")
+        GameTooltip:AddLine(stop.step .. " (" .. (stop.where or "?") .. ")", 1, 1, 1, true)
+        for _, n in ipairs(stop.notes) do GameTooltip:AddLine(n, 0.9, 0.82, 0.5, true) end
+        GameTooltip:AddLine(ns.Focus.ARROW_NOTE, 0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", GameTooltip_Hide)
 
     frame:SetScript("OnUpdate", onUpdate)
     Arrow.SetTarget(nil)
@@ -160,7 +188,17 @@ function Arrow.SetTarget(leg)
     local level = stop.level and stop.level > 0 and ("[" .. stop.level .. "] ") or ""
     titleText:SetText(level .. (stop.questName or ("Quest " .. stop.questId)))
     stepText:SetText(stepLine(leg))
+    if not leg.point then -- e.g. a focus step whose map couldn't be converted: say so instead of a stale distance
+        arrowTex:Hide()
+        distText:SetText("no map position, use the coordinates")
+    end
     elapsedSince = UPDATE_INTERVAL -- redraw on the next frame
+end
+
+---Focus mode on/off: relabels the Skip button ("Next step").
+function Arrow.SetFocus(on)
+    focusMode = on and true or false
+    if skipButton then skipButton:SetText(focusMode and "Next step" or "Skip") end
 end
 
 function Arrow.SetHint(text)

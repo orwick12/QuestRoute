@@ -52,7 +52,7 @@ def main() -> int:
     print("\n--- smoke test ---")
     smoke_lua = luajit21.LuaRuntime(unpack_returned_tuples=True)
     files = smoke_lua.table()
-    for name in ("Router.lua", "Collect.lua", "Arrow.lua", "Core.lua"):
+    for name in ("Router.lua", "Collect.lua", "Focus.lua", "Arrow.lua", "Core.lua"):
         files[name] = (ADDON / name).read_text(encoding="utf-8")
     smoke_lua.globals().ADDON_FILES = files
     smoke_src = (ROOT / "tests" / "smoke.lua").read_text(encoding="utf-8")

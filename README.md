@@ -25,6 +25,19 @@ It reads [Questie](https://github.com/Questie/Questie)'s data (your quest log, t
 - **Skips:** the **Skip** button drops the current quest from the route permanently, for this character, until you `/qr unskip` it. It doesn't touch your quest log or Questie.
 - **Level filters:** quests more than 5 levels below you or 3 above are left out by default. Turn-ins for quests already in your log stay in even when they're low, because the XP is free.
 
+## Focus mode: Cozy Sleeping Bag
+
+`/qr focus` (or `/qr bag`) locks the arrow onto the Cozy Sleeping Bag chain. Other quests are ignored (no Nearby hint, no auto-reroute) until the last quest is turned in. Then focus switches itself off and the normal route comes back. It works on Alliance and Horde characters. The steps are the same, except the first quest runs Westfall to the Barrens for Alliance and the Barrens to Westfall for Horde. Focus is saved per character, so it survives `/reload` and logging out.
+
+The 14 steps: pick up *...and that note you found*, hand it in on the other continent, take *Stepping Stones* from the Nailed Plank, the path north-east of Sun Rock Retreat, Pocket Litter, *Scramble*, Mound of Dirt, *Wet Job*, Carved Figurine at the Stonewrought Dam, *Eagle's Fist*, the cart below Thoradin's Wall, Messenger Bag, *This Must Be The Place*, and the Hastily Rolled-Up Satchel (which gives the bag). The chain starts at level 14.
+
+- The frame shows the step, and the hint line shows `Focus 5/14: Stonetalon Mountains 40.8, 52.6`. Each new step is also printed in chat with a tip where one helps (boat or zeppelin, the optional *Rekindle* campfire).
+- **Guide notes:** every step has notes from the guide (where the object is, which boat or zeppelin to take, which jump to make). They print in chat when the step comes up. Hover the arrow frame to see them again, or type `/qr focus notes`. Notes the guides don't give (some travel legs) are marked *Suggested:*.
+- **The arrow is a straight line.** It doesn't know about boats, zeppelins, paths or cliffs. When a note says take the boat or stay on the path, follow the note. When the target is on the other continent, the frame says "other continent: boat/zeppelin, see notes".
+- Steps move on by themselves: from your quest log (accepted or turned in) and, for the two travel waypoints, from walking up to them or past them.
+- If a step doesn't move on, press **Next step** (the Skip button in focus mode) or type `/qr focus next`. `/qr focus reset` undoes those presses.
+- Quest ids and object coordinates come from the installed QuestieDB. The two travel waypoints come from community guides.
+
 ## Install
 
 1. Install **Questie** first. QuestRoute won't load without it.
@@ -53,6 +66,9 @@ If you use the green **Code → Download ZIP** button instead, copy only the inn
 | `/qr auto on\|off` | Switch to nearby quests automatically (default off) |
 | `/qr radius <yards>` | How close counts as "nearby" (default 40) |
 | `/qr lock` | Lock or unlock the frame. Drag it to move it while unlocked |
+| `/qr focus [on\|off]` | Follow only the Cozy Sleeping Bag chain until it's done. `/qr bag` does the same |
+| `/qr focus notes` | Print the guide notes for the current focus step again |
+| `/qr focus next` / `reset` | Mark the current focus step done / undo those marks |
 | `/qr list [all]` | Print the next 10 stops in chat. `all` also lists hidden stops and why they're hidden |
 | `/qr help` | Show all commands with your current settings |
 

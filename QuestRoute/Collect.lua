@@ -274,6 +274,33 @@ function Collect.QuestName(questId)
     return q and q.name or nil
 end
 
+---Is the quest in your quest log? Questie's log first, then the game's own (in case Questie doesn't know the quest).
+function Collect.InLog(questId)
+    if inLog(questId) then return true end
+    if C_QuestLog and C_QuestLog.IsOnQuest then return C_QuestLog.IsOnQuest(questId) and true or false end
+    if GetNumQuestLogEntries and GetQuestLogTitle then
+        for i = 1, GetNumQuestLogEntries() do
+            if select(8, GetQuestLogTitle(i)) == questId then return true end
+        end
+    end
+    return false
+end
+
+---Has this character turned the quest in?
+function Collect.IsCompleted(questId)
+    local flagged = (C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted) or IsQuestFlaggedCompleted
+    if flagged and flagged(questId) then return true end
+    local char = Questie and Questie.db and Questie.db.char
+    return char and char.complete and char.complete[questId] and true or false
+end
+
+---Zone map coordinates (uiMapId, x and y in 0-100) -> world point, or nil if the map can't be converted.
+function Collect.ZonePoint(mapId, x, y, name)
+    local wx, wy, instance = HBD:GetWorldCoordinatesFromZone(x / 100, y / 100, mapId)
+    if not wx or not wy then return nil end
+    return { x = wx, y = wy, instance = instance, mapId = mapId, name = name }
+end
+
 ---Quests you could skip by name: everything in the log or available, as { [questId] = name }.
 function Collect.KnownQuests()
     local out = {}
