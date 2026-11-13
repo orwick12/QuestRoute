@@ -22,6 +22,7 @@ local KIND_COLOR = {
     objective = { 0.4, 0.8, 1 }, -- blue
     turnin = { 0.3, 1, 0.3 },    -- green
     travel = { 0.75, 0.6, 1 },   -- purple: a focus-mode waypoint with no quest behind it
+    transport = { 0.75, 0.6, 1 }, -- purple too: a focus-mode boat or zeppelin
 }
 
 local function stepLine(leg)
@@ -53,7 +54,7 @@ local function onUpdate(_, elapsed)
         if not px then
             distText:SetText("position unavailable here")
         elseif target.stop.notes then -- focus step: the notes say which boat or zeppelin to take
-            distText:SetText("other continent: boat/zeppelin, see notes")
+            distText:SetText("on another continent, see notes")
         else
             distText:SetText("on another continent")
         end

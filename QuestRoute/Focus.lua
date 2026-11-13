@@ -1,21 +1,27 @@
 -- QuestRoute: focus mode. A fixed, hand-written route for one quest chain (the Cozy Sleeping Bag) that replaces
 -- the normal route until the chain is done.
 --
--- In:  Focus.Steps(faction) -> ordered steps for "Alliance" or "Horde" (same length and order for both)
+-- In:  Focus.Steps(faction) -> ordered steps for "Alliance" or "Horde" (16 and 17 steps: the boats and zeppelins
+--        differ, the quest steps are the same)
 --      Focus.Current(steps, check) -> index of the step to do now (#steps + 1 = chain finished)
---        check = { inLog(questId), done(questId), reached(stepId) }, supplied by Core (WoW/Questie lookups)
--- Out: step = { id, kind = "pickup"|"turnin"|"travel", title, text, zone, mapId, x, y, tip, via, doneIf }
+--        check = { inLog(questId), done(questId), reached(stepId), across(index) }, supplied by Core
+-- Out: step = { id, kind = "pickup"|"turnin"|"travel"|"transport", title, text, zone, mapId, x, y, notes, doneIf,
+--               via (travel waypoint), transport (boat/zeppelin) }
 --
 -- How "where am I in the chain" works: a step counts as done when any of its doneIf checks is true
 -- ({"log", id} = quest in your log, {"done", id} = quest turned in). "via" steps are travel waypoints with no quest
 -- behind them; they count as done once you've reached them. The current step is the one after the LAST done step,
 -- so later evidence wins: if Wet Job is in your log, everything before it is treated as done.
+-- Boat/zeppelin ("transport") steps are never evidence. When one comes up it is passed over as soon as you're on the
+-- continent of the step after it (check.across), however you got there.
 --
 -- PURE LUA (no WoW API calls), so it can be tested offline.
 --
 -- Data source: quest ids, object names and coordinates are from the installed QuestieDB (QuestieDB_Forever.toc,
 -- read 2026-11-13). They match the Wowhead / fan guides to within 0.2. The two travel waypoints (the Stonetalon path
--- and the Hillsbrad cart) aren't in QuestieDB; those come from the guides.
+-- and the Hillsbrad cart) aren't in QuestieDB; those come from the guides. Boat and zeppelin stops are where the
+-- shipmaster / zeppelin master NPC stands in QuestieDB. Which zeppelin master flies where isn't in the DB; that part
+-- is from memory of the classic game.
 
 local _, ns = ...
 local Focus = {}
@@ -47,21 +53,29 @@ local CARVED_FIGURINE = at("Loch Modan", 1432, 49.43, 12.90)      -- object 4240
 local HILLSBRAD_CART = at("Hillsbrad Foothills", 1424, 87.3, 49.6) -- guides: cart below Thoradin's Wall
 local MESSENGER_BAG = at("Arathi Highlands", 1417, 22.48, 24.14)  -- object 406918
 local SATCHEL = at("Arathi Highlands", 1417, 22.48, 24.15)        -- object 424006
+-- Boats and zeppelins: the NPC who stands at the dock / tower platform. Durotar 1411, Stranglethorn Vale 1434.
+local BOAT_BOOTY_BAY = at("Stranglethorn Vale", 1434, 26.08, 73.35) -- npc 9559 Grizzlowe <Shipmaster>, to Ratchet
+local BOAT_RATCHET = at("The Barrens", 1413, 63.54, 38.61)          -- npc 9558 Grimble <Shipmaster>, to Booty Bay
+local ZEP_ORG_GROMGOL = at("Durotar", 1411, 50.69, 12.89)   -- npc 12136 Snurk Bucksquick <Zeppelin Master>
+local ZEP_ORG_UNDERCITY = at("Durotar", 1411, 50.82, 13.54) -- npc 9564 Frezza <Zeppelin Master>
+local ZEP_GROMGOL_ORG = at("Stranglethorn Vale", 1434, 31.43, 29.91) -- npc 3149 Nez'raz <Zeppelin Master>
 
 local NOTE = "...and that note you found"
 
 -- Shown with every step: the arrow is a straight line and knows nothing about the way there.
-Focus.ARROW_NOTE = "The arrow points in a straight line. It doesn't know about boats, zeppelins, paths or cliffs, "
-    .. "so when the notes say take a boat or a path, follow the notes, not the arrow."
+Focus.ARROW_NOTE = "The arrow points in a straight line. It doesn't know about paths or cliffs, and on a new "
+    .. "continent it points at the boat or zeppelin first. When the notes say stay on a path, follow the notes."
 
 local function step(id, kind, title, text, where, doneIf, notes)
     return { id = id, kind = kind, title = title, text = text, zone = where.zone, mapId = where.mapId,
-        x = where.x, y = where.y, doneIf = doneIf, notes = notes or {}, via = kind == "travel" or nil }
+        x = where.x, y = where.y, doneIf = doneIf, notes = notes or {}, via = kind == "travel" or nil,
+        transport = kind == "transport" or nil }
 end
 local function inLogOrDone(questId) return { { "log", questId }, { "done", questId } } end
+local function transport(id, title, text, where, notes) return step(id, "transport", title, text, where, nil, notes) end
 
 ---The chain for one faction. The quest steps are the same for both; Alliance starts in Westfall and hands the note in
----in the Barrens, Horde does the reverse, and the travel notes differ.
+---in the Barrens, Horde does the reverse, and the boats and zeppelins differ.
 ---Notes marked "Guide:" come from the Wowhead / fan guides. Notes marked "Suggested:" are general WoW travel advice
 ---the guides don't give; treat them as a starting point.
 function Focus.Steps(faction)
@@ -75,42 +89,25 @@ function Focus.Steps(faction)
     local toSpot = horde and "the wrecked cart at Alexston Farmstead"
         or "the burnt tower on the Field of Giants, south of Camp Taurajo"
 
-    local toNoteTurnin = horde and {
-        "Guide: take the zeppelin from outside Orgrimmar to Grom'gol (Stranglethorn Vale). The arrow will point "
-            .. "across the sea instead of at the zeppelin tower.",
-        "Suggested: from Grom'gol run north through Stranglethorn and Duskwood into Westfall.",
-    } or {
-        "Guide: take the boat from Booty Bay to Ratchet. The arrow will point across the sea instead of at Booty Bay.",
-        "Suggested: from Ratchet head west to the Crossroads, then south down the road to Camp Taurajo.",
-    }
-    local toStonetalon = horde and {
-        "Suggested: get back to Kalimdor (zeppelin Grom'gol -> Orgrimmar). The arrow points across the sea, not at "
-            .. "the zeppelin.",
-    } or {
-        "Suggested: Sun Rock Retreat is a Horde town; the path starts north-east of it, so you don't need to go in.",
-    }
-    local toLochModan = horde and {
-        "Suggested: zeppelin Orgrimmar -> Undercity (or Grom'gol), then travel to the Wetlands side of Loch Modan. "
-            .. "Loch Modan is Alliance territory. The arrow points across the sea, not at the zeppelin.",
-    } or {
-        "Suggested: boat Auberdine (Darkshore) -> Menethil Harbor, then east through the Wetlands. The arrow points "
-            .. "across the sea, not at the boat.",
-    }
-
-    return {
+    local list = {
         step("note", "pickup", NOTE, "Click the Burned-Out Remains", from, inLogOrDone(note), {
             "Guide: the Burned-Out Remains are in " .. fromSpot .. ".",
             "Guide: the chain needs level 14. The travel legs are safer in your low 20s.",
         }),
-        step("note-in", "turnin", NOTE, "Click the Burned-Out Remains", to, { { "done", note } },
-            { toNoteTurnin[1], toNoteTurnin[2], "Guide: hand it in at the Burned-Out Remains in " .. toSpot .. "." }),
+        step("note-in", "turnin", NOTE, "Click the Burned-Out Remains", to, { { "done", note } }, {
+            horde and "Suggested: from Grom'gol run north through Stranglethorn and Duskwood into Westfall."
+                or "Suggested: from Ratchet head west to the Crossroads, then south down the road to Camp Taurajo.",
+            "Guide: hand it in at the Burned-Out Remains in " .. toSpot .. ".",
+        }),
         step("stepping", "pickup", "Stepping Stones", "Take it from the Nailed Plank", plank, inLogOrDone(Q.stepping), {
             "Guide: the note is nailed to a plank right next to the remains.",
             "Guide: it gives a 12-slot bag, Simple Wood and Flint and Tinder. Keep the wood and flint for the "
                 .. "optional Rekindle quest.",
         }),
         step("path", "travel", "Stepping Stones", "Leave the road here, take the path west", STONETALON_PATH, nil, {
-            toStonetalon[1],
+            horde and "Suggested: from Orgrimmar head west through the Barrens into Stonetalon Mountains."
+                or "Suggested: Sun Rock Retreat is a Horde town; the path starts north-east of it, so you don't need "
+                .. "to go in.",
             "Guide: the path (Webwinder Path) leaves the road north-east of Sun Rock Retreat. Follow it to an "
                 .. "abandoned camp. Stay on the path; the arrow would take you straight over the hills.",
         }),
@@ -132,7 +129,10 @@ function Focus.Steps(faction)
             { "Guide: the Mound of Dirt both finishes Scramble and starts Wet Job." }),
         step("figurine", "turnin", "Wet Job", "Drop onto the carved heads, click the Carved Figurine", CARVED_FIGURINE,
             { { "done", Q.wetJob } }, {
-                toLochModan[1],
+                horde and "Suggested: from Undercity go south through Silverpine, Hillsbrad and Arathi into the "
+                    .. "Wetlands, then through Dun Algaz into Loch Modan. Loch Modan is Alliance territory."
+                    or "Suggested: from Booty Bay, fly north if you have the flight paths (Ironforge or Thelsamar). "
+                    .. "The dam is at the north end of Loch Modan.",
                 "Guide: at the Stonewrought Dam, walk out along the dam, face north (toward the Wetlands) and drop "
                     .. "onto the big carved dwarf heads. The Carved Figurine is on them.",
             }),
@@ -156,9 +156,58 @@ function Focus.Steps(faction)
                     .. "minute up to +3% for two hours; it has a one-hour cooldown.",
             }),
     }
+
+    -- Boats and zeppelins go right before the first step on the other continent.
+    local function before(id, t)
+        for i, st in ipairs(list) do
+            if st.id == id then
+                table.insert(list, i, t)
+                return
+            end
+        end
+    end
+    local SKIP = "Skipped automatically once you're on the other continent, however you got there."
+    if horde then
+        before("note-in", transport("zep-grom", "Zeppelin to Grom'gol", "Snurk Bucksquick: zeppelin to Grom'gol",
+            ZEP_ORG_GROMGOL, {
+                "Guide: take the zeppelin from the tower outside Orgrimmar to Grom'gol (Stranglethorn Vale).",
+                "Data: the arrow points at Snurk Bucksquick <Zeppelin Master> (QuestieDB). Two zeppelins leave this "
+                    .. "tower; check the master's destination before you board.",
+                SKIP,
+            }))
+        before("path", transport("zep-org", "Zeppelin to Orgrimmar", "Nez'raz: zeppelin to Orgrimmar",
+            ZEP_GROMGOL_ORG, {
+                "Suggested: back to Kalimdor on the Grom'gol zeppelin to Orgrimmar.",
+                "Data: the arrow points at Nez'raz <Zeppelin Master> at Grom'gol (QuestieDB). Two zeppelins leave "
+                    .. "Grom'gol; check the master's destination before you board.",
+                SKIP,
+            }))
+        before("figurine", transport("zep-uc", "Zeppelin to Undercity", "Frezza: zeppelin to Undercity",
+            ZEP_ORG_UNDERCITY, {
+                "Suggested: zeppelin from Orgrimmar to Undercity, then south to Loch Modan.",
+                "Data: the arrow points at Frezza <Zeppelin Master> (QuestieDB). Check the master's destination "
+                    .. "before you board.",
+                SKIP,
+            }))
+    else
+        before("note-in", transport("boat-ratchet", "Boat to Ratchet", "Grizzlowe: boat to Ratchet", BOAT_BOOTY_BAY, {
+            "Guide: take the boat from Booty Bay to Ratchet.",
+            "Data: the arrow points at Grizzlowe <Shipmaster> on the Booty Bay dock (QuestieDB).",
+            "Suggested: from Westfall, go south through Stranglethorn Vale to Booty Bay.",
+            SKIP,
+        }))
+        before("figurine", transport("boat-bb", "Boat to Booty Bay", "Grimble: boat to Booty Bay", BOAT_RATCHET, {
+            "Suggested: boat from Ratchet back to Booty Bay. (Auberdine -> Menethil Harbor also works, but "
+                .. "QuestieDB has no position for that dock, so the arrow can't point at it.)",
+            "Data: the arrow points at Grimble <Shipmaster> on the Ratchet dock (QuestieDB).",
+            SKIP,
+        }))
+    end
+    return list
 end
 
 function Focus.StepDone(s, check)
+    if s.transport then return false end -- never evidence: being on a continent says nothing about the chain
     if s.via then return check.reached(s.id) and true or false end
     for _, c in ipairs(s.doneIf or {}) do
         if (c[1] == "log" and check.inLog(c[2])) or (c[1] == "done" and check.done(c[2])) then return true end
@@ -166,13 +215,23 @@ function Focus.StepDone(s, check)
     return false
 end
 
----Index of the step to do now: one past the last done step. #steps + 1 means the chain is finished.
+---Index of the step to do now: one past the last done step, then past any boat/zeppelin you no longer need (you're
+---already on the continent of the step after it). #steps + 1 means the chain is finished.
 function Focus.Current(steps, check)
     local last = 0
     for i, s in ipairs(steps) do
         if Focus.StepDone(s, check) then last = i end
     end
-    return last + 1
+    local i = last + 1
+    while steps[i] and steps[i].transport and check.across and check.across(i) do i = i + 1 end
+    return i
+end
+
+---Index of the first non-transport step after `i` (the step a boat/zeppelin takes you towards), or nil.
+function Focus.NextStop(steps, i)
+    for j = i + 1, #steps do
+        if not steps[j].transport then return j end
+    end
 end
 
 ---"Stonetalon Mountains 40.8, 52.6" for the frame and chat.

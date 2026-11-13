@@ -75,17 +75,27 @@ end
 
 local recompute -- defined below; focus mode hands back to it when it switches off
 
+local focusSteps -- this character's step list, for focusCheck.across
+
+local function stepPoint(s) return s and Collect.ZonePoint(s.mapId, s.x, s.y) end
+
 local focusCheck = {
     inLog = function(questId) return Collect.InLog(questId) end,
     done = function(questId) return Collect.IsCompleted(questId) end,
     reached = function(stepId) return db.focusReached[stepId] end,
+    -- A boat/zeppelin step is no longer needed once you're on the continent of the step it leads to.
+    across = function(i)
+        local here = playerPoint()
+        local dest = stepPoint(focusSteps[Focus.NextStop(focusSteps, i) or 0])
+        return here and dest and here.instance == dest.instance or false
+    end,
 }
 
 ---The chain for this character's faction, and the index of the step to do now. Your quest log decides the step;
 ---"Next step" presses can push it further on, never back.
 local function focusPosition()
-    local steps = Focus.Steps(UnitFactionGroup("player"))
-    return steps, math.max(Focus.Current(steps, focusCheck), db.focusSkip or 0)
+    focusSteps = Focus.Steps(UnitFactionGroup("player"))
+    return focusSteps, math.max(Focus.Current(focusSteps, focusCheck), db.focusSkip or 0)
 end
 
 local function focusOff(msg)
@@ -108,7 +118,7 @@ local function focusUpdate(force)
     local leg = {
         stop = { key = "f:" .. s.id, stepId = s.id, questName = s.title, kind = s.kind, step = s.text,
             focus = true, focusIndex = i, via = s.via, notes = s.notes, where = Focus.Where(s) },
-        point = Collect.ZonePoint(s.mapId, s.x, s.y),
+        point = stepPoint(s),
     }
     route = { leg }
     setTarget(leg)
@@ -128,8 +138,7 @@ local function focusTick()
     local reached = Router.Distance(here, tp) <= VIA_YARDS
     if not reached then
         local steps, i = focusPosition()
-        local nxt = steps[i + 1]
-        local np = nxt and Collect.ZonePoint(nxt.mapId, nxt.x, nxt.y)
+        local np = stepPoint(steps[Focus.NextStop(steps, i) or 0])
         reached = np and np.instance == here.instance
             and Router.Distance(here, np) < 0.5 * Router.Distance(tp, np) or false
     end

@@ -68,10 +68,11 @@ end
 
 ------------------------------------------------------------------ fake Questie
 -- Coordinates: zone percent * 10 = world yards, all on instance 0, zone (area) id 12 = uiMapId 12.
-local player = { x = 0, y = 0 }
+local player = { x = 0, y = 0, instance = 0 }
+local KALIMDOR = { [1411] = true, [1413] = true, [1442] = true } -- focus-mode maps on the other continent
 local HBD = {
-    GetWorldCoordinatesFromZone = function(_, x, y, map) return x * 1000, y * 1000, 0 end,
-    GetPlayerWorldPosition = function() return player.x, player.y, 0 end,
+    GetWorldCoordinatesFromZone = function(_, x, y, map) return x * 1000, y * 1000, KALIMDOR[map] and 1 or 0 end,
+    GetPlayerWorldPosition = function() return player.x, player.y, player.instance end,
     GetPlayerZone = function() return 12 end,
     GetWorldVector = function(_, inst, ox, oy, dx, dy)
         local ddx, ddy = dx - ox, dy - oy
@@ -345,52 +346,67 @@ local Focus, Q = ns.Focus, ns.Focus.QUESTS
 
 -- pure step logic
 local A, H = Focus.Steps("Alliance"), Focus.Steps("Horde")
-check(#A == 14 and #H == 14, "both factions get the same 14 steps (" .. #A .. ", " .. #H .. ")")
-check(A[1].zone == "Westfall" and A[2].zone == "The Barrens", "Alliance starts in Westfall, hands the note in in the Barrens")
-check(H[1].zone == "The Barrens" and H[2].zone == "Westfall", "Horde starts in the Barrens, hands the note in in Westfall")
+local function ids(list)
+    local out = {}
+    for i, st in ipairs(list) do out[i] = st.id end
+    return table.concat(out, ",")
+end
+check(ids(A) == "note,boat-ratchet,note-in,stepping,path,litter,scramble,mound,wetjob,boat-bb,figurine,eagle,cart,bag,place,satchel",
+    "Alliance: boat to Ratchet before the Barrens, boat back before Loch Modan (" .. ids(A) .. ")")
+check(ids(H) == "note,zep-grom,note-in,stepping,zep-org,path,litter,scramble,mound,wetjob,zep-uc,figurine,eagle,cart,bag,place,satchel",
+    "Horde: zeppelin to Grom'gol, back to Orgrimmar, then to Undercity (" .. ids(H) .. ")")
+check(A[1].zone == "Westfall" and A[3].zone == "The Barrens", "Alliance starts in Westfall, hands the note in in the Barrens")
+check(H[1].zone == "The Barrens" and H[3].zone == "Westfall", "Horde starts in the Barrens, hands the note in in Westfall")
+check(A[2].zone == "Stranglethorn Vale" and A[2].x == 26.08 and H[2].zone == "Durotar" and H[2].x == 50.69,
+    "boat points at Grizzlowe in Booty Bay, zeppelin at Snurk Bucksquick in Durotar")
 local notesOk = true
 for _, list in ipairs({ A, H }) do
     for _, st in ipairs(list) do
         if #st.notes == 0 then notesOk = false end
         for _, n in ipairs(st.notes) do
-            if not (n:find("^Guide") or n:find("^Suggested")) then notesOk = false end
+            if not (n:find("^Guide") or n:find("^Suggested") or n:find("^Data") or n:find("^Skipped")) then
+                notesOk = false
+            end
         end
     end
 end
-check(notesOk, "every step has notes, each labelled Guide: or Suggested:")
-check(H[2].notes[1]:find("zeppelin", 1, true) ~= nil and A[2].notes[1]:find("boat", 1, true) ~= nil, "Horde gets the zeppelin note, Alliance the boat")
+check(notesOk, "every step has notes, each labelled Guide:, Suggested: or Data:")
 check(A[1].doneIf[1][2] == Q.noteAlliance and H[1].doneIf[1][2] == Q.noteHorde, "each faction checks its own note quest id")
-local function fakeCheck(log, done, reached)
+local function fakeCheck(log, done, reached, across)
     return { inLog = function(id) return log[id] end, done = function(id) return done[id] end,
-        reached = function(id) return reached[id] end }
+        reached = function(id) return reached[id] end, across = function() return across end }
 end
 check(Focus.Current(A, fakeCheck({}, {}, {})) == 1, "nothing done: step 1")
-check(Focus.Current(A, fakeCheck({ [Q.stepping] = true }, {}, {})) == 4, "Stepping Stones in log: step 4 (the path)")
-check(Focus.Current(A, fakeCheck({ [Q.stepping] = true }, {}, { path = true })) == 5, "path reached: step 5 (Pocket Litter)")
-check(Focus.Current(A, fakeCheck({ [Q.wetJob] = true }, {}, {})) == 9, "later evidence wins: Wet Job in log means step 9")
-check(Focus.Current(A, fakeCheck({}, { [Q.place] = true }, {})) == 15, "final quest turned in: chain finished")
+check(Focus.Current(A, fakeCheck({ [Q.noteAlliance] = true }, {}, {}, false)) == 2, "note in log, still in Westfall: the boat")
+check(Focus.Current(A, fakeCheck({ [Q.noteAlliance] = true }, {}, {}, true)) == 3, "note in log, already in Kalimdor: boat skipped")
+check(Focus.Current(A, fakeCheck({ [Q.stepping] = true }, {}, {})) == 5, "Stepping Stones in log: the path")
+check(Focus.Current(A, fakeCheck({ [Q.stepping] = true }, {}, { path = true })) == 6, "path reached: Pocket Litter")
+check(Focus.Current(A, fakeCheck({ [Q.wetJob] = true }, {}, {}, false)) == 10, "Wet Job in log, still in Kalimdor: boat back")
+check(Focus.Current(A, fakeCheck({ [Q.wetJob] = true }, {}, {}, true)) == 11, "Wet Job in log, already across: the dam")
+check(Focus.Current(A, fakeCheck({}, { [Q.place] = true }, {})) == 17, "final quest turned in: chain finished")
+check(Focus.Current(H, fakeCheck({ [Q.stepping] = true }, {}, {}, false)) == 5, "Horde in Westfall with Stepping Stones: zeppelin back")
 
--- driving it through the addon (fake world: zone percent * 10 = yards, every map on one continent)
+-- driving it through the addon (fake world: zone percent * 10 = yards; Kalimdor maps are continent 1, the rest 0)
 local function skipButtonText()
     for _, f in ipairs(frames) do
         local t = rawget(f, "text")
         if t == "Next step" or t == "Skip" then return t end
     end
 end
-player.x, player.y = 0, 0
+player.x, player.y, player.instance = 0, 0, 0
 playerLevel = 14
 chat = {}
 slash("focus")
 check(QuestRouteDB.focus == "sleepingbag", "/qr focus turns focus on and saves it")
 check(chatHas("Focus on: Cozy Sleeping Bag (Alliance)"), "says focus is on, with the faction")
-check(chatHas("The arrow points in a straight line"), "turning focus on explains the arrow doesn't follow boats or paths")
+check(chatHas("The arrow points in a straight line"), "turning focus on explains what the arrow does and doesn't know")
 check(chatHas("Guide: the Burned-Out Remains are in the wrecked cart at Alexston Farmstead."), "step 1 prints its guide notes")
-check(chatHas("Focus 1/14: ...and that note you found — Click the Burned-Out Remains (Westfall 37.4, 50.7)"),
+check(chatHas("Focus 1/16: ...and that note you found — Click the Burned-Out Remains (Westfall 37.4, 50.7)"),
     "announces step 1 with zone and coordinates")
 check(skipButtonText() == "Next step", "Skip button reads 'Next step' in focus mode")
 arrowFrame.scripts.OnUpdate(arrowFrame, 1)
 check(shownTexts():find("Click the Burned-Out Remains", 1, true) ~= nil, "arrow shows the focus step (" .. shownTexts() .. ")")
-check(shownTexts():find("Focus 1/14: Westfall 37.4, 50.7", 1, true) ~= nil, "hint line shows step and coordinates")
+check(shownTexts():find("Focus 1/16: Westfall 37.4, 50.7", 1, true) ~= nil, "hint line shows step and coordinates")
 -- standing next to another quest must not pull the arrow away (no nearby hint, no auto reroute)
 slash("auto on")
 player.x, player.y = 495, 0
@@ -398,48 +414,77 @@ tick()
 check(QuestRouteDB.focus and not chatHas("Rerouted to nearby quest"), "auto-reroute ignores other quests while focused")
 slash("auto off")
 
+-- accept the note in Westfall: next is the boat in Booty Bay, and the arrow points at the shipmaster
 onQuest[Q.noteAlliance] = true
 chat = {}
 tick()
-check(chatHas("Focus 2/14"), "note in the log: step 2 (hand it in)")
-check(chatHas("Guide: take the boat from Booty Bay to Ratchet. The arrow will point across the sea"),
-    "step 2 prints the Alliance boat note, warning the arrow won't point at the boat")
-check(chatHas("Guide: hand it in at the Burned-Out Remains in the burnt tower"), "step 2 says where the remains are")
+check(chatHas("Focus 2/16: Boat to Ratchet — Grizzlowe: boat to Ratchet (Stranglethorn Vale 26.1, 73.3)"),
+    "note in the log, still on the Eastern Kingdoms: the arrow goes to the Booty Bay boat")
+check(chatHas("Data: the arrow points at Grizzlowe <Shipmaster>"), "says where the boat position comes from")
+player.x, player.y = 0, 0
+arrowFrame.scripts.OnUpdate(arrowFrame, 1)
+check(shownTexts():find("Grizzlowe: boat to Ratchet", 1, true) and shownTexts():find(" yd", 1, true),
+    "arrow shows a distance to the dock, not 'another continent' (" .. shownTexts() .. ")")
 -- hovering the frame shows the notes in a tooltip
 local tipLines = {}
 rawset(GameTooltip, "AddLine", function(_, t) tipLines[#tipLines + 1] = t end)
 arrowFrame.scripts.OnEnter(arrowFrame)
 local tipText = table.concat(tipLines, " | ")
 check(tipText:find("boat from Booty Bay", 1, true) and tipText:find("straight line", 1, true),
-    "hover tooltip lists the step's notes and the straight-line warning (" .. tipText .. ")")
+    "hover tooltip lists the step's notes and the arrow warning (" .. tipText .. ")")
+-- step off the boat in Ratchet: the boat step drops out, the arrow goes to the Barrens remains
+player.instance = 1
+chat = {}
+tick()
+check(chatHas("Focus 3/16") and chatHas("Guide: hand it in at the Burned-Out Remains in the burnt tower"),
+    "arrived in Kalimdor: on to the note turn-in")
+-- an arrow to the other continent says so
+player.instance = 0
+arrowFrame.scripts.OnUpdate(arrowFrame, 1)
+check(shownTexts():find("on another continent, see notes", 1, true) ~= nil, "focus target on the other continent says so")
+player.instance = 1
+
 onQuest[Q.noteAlliance] = nil
 flagged[Q.noteAlliance] = true
 onQuest[Q.stepping] = true
 chat = {}
 tick()
-check(chatHas("Focus 4/14") and chatHas("Leave the road here"), "Stepping Stones in log: step 4 (the path)")
+check(chatHas("Focus 5/16") and chatHas("Leave the road here"), "Stepping Stones in log: the path")
 player.x, player.y = 512, 520 -- within 25 yd of the path point (509, 523)
 chat = {}
 tick()
-check(QuestRouteDB.focusReached.path == true and chatHas("Focus 5/14"), "reaching the path waypoint moves on to the Pocket Litter")
+check(QuestRouteDB.focusReached.path == true and chatHas("Focus 6/16"), "reaching the path waypoint moves on to the Pocket Litter")
 QuestRouteDB.focusReached = {} -- forget the waypoint
 player.x, player.y = 405, 524 -- at the camp, never touched the path waypoint
 chat = {}
 tick()
-check(chatHas("Focus 5/14"), "already well past the waypoint: it's ticked off without walking back")
+check(chatHas("Focus 6/16"), "already well past the waypoint: it's ticked off without walking back")
 chat = {}
 slash("focus notes")
-check(chatHas("Focus 5/14") and chatHas("starts Rekindle") and chatHas("straight line"), "/qr focus notes re-prints the notes")
+check(chatHas("Focus 6/16") and chatHas("starts Rekindle") and chatHas("straight line"), "/qr focus notes re-prints the notes")
 
 chat = {}
 slash("skip") -- the Skip button in focus mode
-check(chatHas("Marked focus step 5 done") and chatHas("Focus 6/14"), "Skip/Next step marks the step done")
-check(QuestRouteDB.skipped[0] == nil and next(QuestRouteDB.skipped) == nil, "Next step doesn't add a quest skip")
+check(chatHas("Marked focus step 6 done") and chatHas("Focus 7/16"), "Skip/Next step marks the step done")
+check(next(QuestRouteDB.skipped) == nil, "Next step doesn't add a quest skip")
 slash("focus reset")
-check(chatHas("Focus 5/14"), "/qr focus reset goes back to what the quest log says")
+check(chatHas("Focus 6/16"), "/qr focus reset goes back to what the quest log says")
 chat = {}
 slash("reroute")
-check(chatHas("Focus 5/14"), "Reroute in focus mode re-shows the current step")
+check(chatHas("Focus 6/16"), "Reroute in focus mode re-shows the current step")
+
+-- Wet Job in the log while still in Kalimdor: the boat back from Ratchet
+onQuest[Q.stepping] = nil
+flagged[Q.stepping], flagged[Q.scramble] = true, true
+onQuest[Q.wetJob] = true
+chat = {}
+tick()
+check(chatHas("Focus 10/16: Boat to Booty Bay — Grimble: boat to Booty Bay (The Barrens 63.5, 38.6)"),
+    "Wet Job in Kalimdor: the arrow goes to the Ratchet boat")
+player.instance = 0
+chat = {}
+tick()
+check(chatHas("Focus 11/16"), "back on the Eastern Kingdoms: on to the dam")
 
 -- survives a reload: saved variable restores focus on startup
 check(QuestRouteDB.focus == "sleepingbag", "focus is still saved")
@@ -455,8 +500,23 @@ check(not chatHas("[turnin] This Must Be The Place") and chatHas("1. ["), "norma
 chat = {}
 slash("focus")
 check(chatHas("already done on this character") and QuestRouteDB.focus == false, "can't re-focus a finished chain")
-flagged[Q.place] = nil
+for _, id in ipairs({ Q.place, Q.noteAlliance, Q.stepping, Q.scramble }) do flagged[id] = nil end
+onQuest[Q.wetJob] = nil
+
+-- Horde: starts in the Barrens; after accepting the note the arrow goes to the zeppelin tower in Durotar
+faction = "Horde"
+player.instance = 1
+chat = {}
 slash("focus on")
+check(chatHas("Focus on: Cozy Sleeping Bag (Horde)") and chatHas("Focus 1/17") and chatHas("The Barrens 46.4, 73.9"),
+    "Horde focus starts at the Barrens remains")
+onQuest[Q.noteHorde] = true
+chat = {}
+tick()
+check(chatHas("Focus 2/17: Zeppelin to Grom'gol — Snurk Bucksquick: zeppelin to Grom'gol (Durotar 50.7, 12.9)"),
+    "Horde with the note in Kalimdor: the arrow goes to the Grom'gol zeppelin")
+onQuest[Q.noteHorde] = nil
+faction = "Alliance"
 slash("focus off")
 check(QuestRouteDB.focus == false and chatHas("Focus off, back to the normal route."), "/qr focus off")
 playerLevel = 10
@@ -464,6 +524,7 @@ chat = {}
 slash("bag")
 check(chatHas("can't be started below level 14") and QuestRouteDB.focus == "sleepingbag", "/qr bag works and warns below level 14")
 slash("bag off")
+player.instance = 0
 
 print(string.format("\nsmoke: %d failed", failed))
 return failed
